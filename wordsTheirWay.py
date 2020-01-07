@@ -197,6 +197,7 @@ def get_feature_guide(selection):
         return None
     #Read in feature guide csv
     feature_guide = pd.read_csv(s + ".csv")
+    feature_guide.fillna(0, inplace=True)
     #Set column names to lowercase
     feature_guide.columns = [str.lower(col) for col in feature_guide.columns]   
     return s, feature_guide
