@@ -1,6 +1,8 @@
 import pandas as pd
 from re import match
 from numpy import nan
+import PySimpleGUI as sg      
+
 
 def check_spelling_stage(level_selection, fp):
     #Create Elementary Spelling Stages
@@ -60,7 +62,7 @@ def calculate_feature_points(level_selection, feature_guide, test, name):
         return False
 
     #Create answer sheet
-    answer_sheet = feature_guide.set_index("feature").applymap(lambda x: nan)
+    answer_sheet = feature_guide.set_index("feature").applymap(lambda x: None)
     
     #Initialize feature points to 0
     feature_points = 0
@@ -160,8 +162,9 @@ def calculate_feature_points(level_selection, feature_guide, test, name):
     fg_indexed = feature_guide.set_index("feature")
     for col in answer_sheet.columns:
         for row in answer_sheet.index:
-            if answer_sheet.loc[row, col] != 1 and fg_indexed.loc[row, col] is not nan:
+            if answer_sheet.loc[row, col] != 1 and fg_indexed.loc[row, col] != 0:
                 answer_sheet.loc[row, col] = 0
+
 
     #Sum Feature Points By Words        
     answer_sheet["feature points"] = answer_sheet.sum(axis = 1)
@@ -207,88 +210,90 @@ def get_feature_guide(selection):
 ########################
 
 #GET LEVEL primary, elementary, ...
+sg.theme('DarkAmber')    # Remove line if you want plain gray windows
 
-#GET FILE NAME AND PATH
-while True:
+layout = [ 
+            [sg.Text('Select Feature Guide')],
+            # [sg.Listbox(values=('primary', 'elementary', 'upper-level'), size=(20, 3))],
+            [sg.Radio('Primary', "feature_guide_radio", default=True, size=(10,1)), sg.Radio('Elementary', "feature_guide_radio"), sg.Radio('Upper Level', "feature_guide_radio")],
+            [sg.Text('Document to Score: ')],
+            [sg.In(), sg.FileBrowse()],
+#            [sg.Open(), sg.Cancel()],      
+            [sg.Button('Run', bind_return_key=True), sg.Cancel()],
+            [sg.Text(size=(60,2), key='output')]      
+            ]
+window = sg.Window('Words Their Way', layout)      
+
+while True:      
+    event, values = window.read()      
+    if event is not None and event not in ('Cancel'):      
+        try:  
+            if values[0]:
+                selection = "primary"
+            elif values[1]:
+                selection = "elementary"
+            else:
+                selection = "upper-level"
+
+
+            print("Feature Guide: ", selection)
+            print("File path: ", values[3], values["Browse"])  
+        except:      
+            print("Error")
+        # window['output'].update("Scored workbook saved here:")      
+
+
     #Read in appropriate feature guide
-    while True:
-        s = input("""Enter the feature guide you want to use.
-Valid options are:
-    1) primary
-    2) elementary
-    3) upper-level
-Choice: """)
-        level_selection, feature_guide = get_feature_guide(s)
-        if feature_guide is not None:
-            break           
-
-    while True:
-        test_path = input("Enter the name of the file you would like to score or q to quit: ")
-        
-        if test_path == "q":
-            break
-
+        level_selection, feature_guide = get_feature_guide(selection)         
         try :
             #Read in test
-            test = pd.read_excel(test_path)
+            if values[3] != "":
+                file_path = values[3]
+            else: 
+                file_path = values["Browse"]
+            test = pd.read_excel(file_path)
             test = test.rename(columns = {"name" : "feature"}).set_index('feature')
         except FileNotFoundError:
             print("File not found")
             continue
 
-        break   
+        #Calculate Answer Sheets
+        results = [calculate_feature_points(level_selection, feature_guide, test, name) for name in test.columns]
+        
+        #Check if results were returned for all names
+        if any([True for r in results if r == False]):
+            break
+        #CREATE EXCEL SHEETS BY name AND SUMMARY PAGE WITH name AND stage
+        #Create output path
+        out_path = file_path.split(".")[0] + "_output.xlsx"
+        writer = pd.ExcelWriter(out_path, engine='xlsxwriter')
+        #Create Summary Table
+        names_stages = [[r[0], r[1]] for r in results]
 
-    
-    if test_path == "q":
+        names_stages_df = pd.DataFrame(names_stages, columns = ["Name", "Learning Stage"])
+        names_stages_df.to_excel(writer, sheet_name = "Summary", index = False)
+
+
+        #Create Student Sheets
+        for r in results:
+            num_words = len(r[2].index)
+            num_features = len(r[2].columns) - 4
+            r[2].to_excel(writer, sheet_name = r[0], startrow = 2)
+            worksheet = writer.book.get_worksheet_by_name(r[0])
+            #Add name and spelling stage above answer sheet
+            worksheet.write(0, 0, "Name")
+            worksheet.write(0, 1, r[0])
+            worksheet.write(1, 0, "Spelling Stage")
+            worksheet.write(1, 1, r[1])
+            #Apply conditionaly formatting to the answer sheet
+            #'C4:N28'
+            worksheet.conditional_format(3,2,3 + num_words, 2 + num_features, {'type': 'icon_set',
+                                           'icon_style': '3_symbols'})  
+
+        # Close the Pandas Excel writer and output the Excel file.
+        writer.save()
+        writer.close()
+        #DISPLAY CONCLUDING MESSAGE STATING WHERE THE OUTPUT FILE IS SAVED TO
+        window['output'].update("Output has been saved to the workbook: %s"%out_path) 
+    else:
         break
-
-    #Calculate Answer Sheets
-    results = [calculate_feature_points(level_selection, feature_guide, test, name) for name in test.columns]
-    
-    #Check if results were returned for all names
-    if any([True for r in results if r == False]):
-        break
-    #CREATE EXCEL SHEETS BY name AND SUMMARY PAGE WITH name AND stage
-    #Create output path
-    out_path = test_path.split(".")[0] + "_output.xlsx"
-    writer = pd.ExcelWriter(out_path, engine='xlsxwriter')
-    #Create Summary Table
-    names_stages = [[r[0], r[1]] for r in results]
-
-    names_stages_df = pd.DataFrame(names_stages, columns = ["Name", "Learning Stage"])
-    names_stages_df.to_excel(writer, sheet_name = "Summary", index = False)
-
-
-    #Create Student Sheets
-    for r in results:
-        r[2].to_excel(writer, sheet_name = r[0], startrow = 2)
-        worksheet = writer.book.get_worksheet_by_name(r[0])
-        #Add name and spelling stage above answer sheet
-        worksheet.write(0, 0, "Name")
-        worksheet.write(0, 1, r[0])
-        worksheet.write(1, 0, "Spelling Stage")
-        worksheet.write(1, 1, r[1])
-        #Apply conditionaly formatting to the answer sheet
-        worksheet.conditional_format('C4:N28', {'type': 'icon_set',
-                                       'icon_style': '3_symbols'})  
-
-    # Close the Pandas Excel writer and output the Excel file.
-    writer.save()
-    writer.close()
-    #DISPLAY CONCLUDING MESSAGE STATING WHERE THE OUTPUT FILE IS SAVED TO
-    print("Output has been saved to the workbook: %s"%out_path)
-
-    while True:
-        user_input = input("Would you like to score another workbook? (y/n): ")
-        if user_input != "y" and user_input != "n":
-            print("Invalid Input")
-            continue
-        break
-
-    if user_input == "n":
-        break
-
-
-
-
-    
